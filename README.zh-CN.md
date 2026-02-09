@@ -354,7 +354,7 @@ def solve_pose(
     ok, rvec, tvec = cv2.solvePnP(points_3d, points_2d, camera_matrix, dist_coeffs)
     if not ok:
         raise ValueError(
-            "PnP 求解失败，请检查点对应关系、点顺序、点是否非共面/共线以及相机标定质量，并确保至少提供 4 个点对，"
+            "PnP 求解失败，请优先确认点对数量≥4，其次检查点是否共线/共面，再核验点顺序与相机标定质量，"
             f"当前 2D 点数为 {len(points_2d)}，3D 点数为 {len(points_3d)}。"
         )
     return rvec, tvec
@@ -413,12 +413,12 @@ def calculate_avi(
     beta: float = 0.4,  # beta: 高频一致性权重（与 alpha 互补）
 ) -> bool:
     """AVI 综合评分：hf_penalty 越高代表突兀度越大，使用 (1 - hf_penalty) 转为一致性得分。"""
-    # 建议 alpha + beta = 1.0 保持权重归一化；如需强调某项指标，可允许非归一化权重。
+    # 默认建议 alpha + beta = 1.0 保持权重归一化；若需偏重某项指标，可调整但需重新校准阈值。
     visible_edge_ratio = calculate_edge_integrity(gt_mask, occlusion_mask)
     hf_penalty = frequency_domain_analysis(image_augmented, occlusion_mask)
     hf_consistency = 1.0 - hf_penalty  # 高频突兀度转为一致性得分
     avi = alpha * visible_edge_ratio + beta * hf_consistency
-    threshold = 0.3  # PR 曲线偏召回工作点，需更高精度时可上调
+    threshold = 0.3  # 验证集上取召回率约 0.9 的阈值，可在 0.2-0.5 范围微调
     return avi > threshold
 ```
 
