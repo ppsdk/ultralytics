@@ -413,7 +413,7 @@ def calculate_avi(
     beta: float = 0.4,  # beta: 高频一致性权重（与 alpha 互补，区间 0.3-0.5）
 ) -> bool:
     """AVI 综合评分：hf_penalty 越高代表突兀度越大，使用 (1 - hf_penalty) 转为一致性得分。"""
-    # 默认建议 alpha + beta = 1.0 保持权重归一化；若需偏重某项指标，可调整但需重新校准阈值。
+    # 默认建议 alpha + beta = 1.0 保持权重归一化; 若需偏重某项指标, 可调整但需重新校准阈值。
     visible_edge_ratio = calculate_edge_integrity(gt_mask, occlusion_mask)
     hf_penalty = frequency_domain_analysis(image_augmented, occlusion_mask)
     hf_consistency = 1.0 - hf_penalty  # 高频突兀度转为一致性得分
