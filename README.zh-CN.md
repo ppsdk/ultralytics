@@ -354,7 +354,7 @@ def solve_pose(
     ok, rvec, tvec = cv2.solvePnP(points_3d, points_2d, camera_matrix, dist_coeffs)
     if not ok:
         raise ValueError(
-            "PnP 求解失败，请检查点对应关系、点顺序、点是否非共面以及相机标定质量，并确保至少提供 4 个点对，"
+            "PnP 求解失败，请检查点对应关系、点顺序、点是否非共面/共线以及相机标定质量，并确保至少提供 4 个点对，"
             f"当前 2D 点数为 {len(points_2d)}，3D 点数为 {len(points_3d)}。"
         )
     return rvec, tvec
@@ -412,7 +412,8 @@ def calculate_avi(
     alpha: float = 0.6,  # alpha: 边缘可见性权重（验证集网格搜索稳定区间）
     beta: float = 0.4,  # beta: 高频一致性权重（与 alpha 互补）
 ) -> bool:
-    # 建议 alpha + beta = 1.0 保持权重归一化。
+    """AVI 综合评分：hf_penalty 越高代表突兀度越大，使用 (1 - hf_penalty) 转为一致性得分。"""
+    # 建议 alpha + beta = 1.0 保持权重归一化；如需强调某项指标，可允许非归一化权重。
     visible_edge_ratio = calculate_edge_integrity(gt_mask, occlusion_mask)
     hf_penalty = frequency_domain_analysis(image_augmented, occlusion_mask)
     hf_consistency = 1.0 - hf_penalty  # 高频突兀度转为一致性得分
