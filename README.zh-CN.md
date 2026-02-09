@@ -338,7 +338,7 @@ import numpy as np
 
 
 def fit_quad_from_mask(mask: np.ndarray, min_eps: float = 0.005, max_eps: float = 0.05, steps: int = 6) -> np.ndarray:
-    """动态拟合四边形，min_eps/max_eps 为周长比例搜索范围，steps 为采样步数，返回 4x2 顶点（失败时为最小外接矩形顶点）。"""
+    """动态拟合四边形，min_eps/max_eps 为周长比例搜索范围，steps 为采样步数，返回形状为 (4, 2) 的顶点数组（失败时为最小外接矩形顶点）。"""
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     hull = cv2.convexHull(np.vstack(contours))
     peri = cv2.arcLength(hull, True)
@@ -353,7 +353,7 @@ def fit_quad_from_mask(mask: np.ndarray, min_eps: float = 0.005, max_eps: float 
                 best_area = area
                 best = approx
     if best is not None:
-        return best.squeeze(1)  # Nx2
+        return best.squeeze(1)  # 4x2
     # 若无法拟合四边形，回退至最小外接矩形作为检测框
     return cv2.boxPoints(cv2.minAreaRect(hull)).astype(np.float32)
 ```
