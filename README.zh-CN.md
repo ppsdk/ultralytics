@@ -246,14 +246,14 @@ Ultralytics 支持广泛的 YOLO 模型，从早期的版本如 [YOLOv3](https:/
 
 在自动化物流园场景中，复合移动机器人（如 AGV + 机械臂）需要对集装箱端面进行精准对位与作业。由于相机安装角度与端面之间存在显著视角偏差，采集图像呈现强透视变换。
 
-- **痛点**：传统水平检测框（AABB）无法贴合透视后的倾斜边缘，导致 PnP 算法的角点输入误差过大。
+- **痛点**：传统水平检测框（AABB）无法贴合透视后的倾斜边缘，导致四边形检测框角点偏差显著。
 - **挑战**：背光、锈迹、遮挡导致分割掩膜缺角或边缘模糊，无法直接提取稳定的四边形顶点。
 
 #### 1.2 主要贡献 (Contributions)
 
 1. **架构改进**：在 YOLO26 主干中引入 MSGG（Multi-Scale Geometric Gated）模块，增强长直边界的全局感知能力。
 2. **损失函数创新**：设计边界约束损失（Boundary-Constrained Loss, BCL），通过距离变换图引导非模态（Amodal）补全。
-3. **几何拟合管线**：提出“掩膜分割 → 凸包 → 动态拟合 → PnP 求解”流程，实现 2D 像素到世界坐标的稳定转换。
+3. **几何拟合管线**：提出“掩膜分割 → 凸包 → 动态多边形拟合 → 四边形检测框”流程，稳定输出贴合集装箱端面的检测框。
 
 ### 2. Method (研究方法)
 
@@ -328,36 +328,25 @@ def boundary_constrained_loss(
 loss = loss_v8_seg + lambda_bc * boundary_constrained_loss(pred_mask, dist_map)
 ```
 
-#### 2.3 几何拟合与姿态求解
+#### 2.3 几何拟合与检测框生成
 
-将预测掩膜转化为稳定四边形，再输入 PnP 算法：
+将预测掩膜转化为稳定四边形检测框：
 
 ```python
 import cv2
 import numpy as np
 
 
-def fit_quad_from_mask(mask: np.ndarray) -> np.ndarray:
+def fit_quad_from_mask(mask: np.ndarray, min_eps: float = 0.005, max_eps: float = 0.05, steps: int = 6) -> np.ndarray:
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     hull = cv2.convexHull(np.vstack(contours))
     peri = cv2.arcLength(hull, True)
-    approx = cv2.approxPolyDP(hull, 0.02 * peri, True)
-    return approx.squeeze(1)  # Nx2
-
-
-def solve_pose(
-    points_2d: np.ndarray,
-    points_3d: np.ndarray,
-    camera_matrix: np.ndarray,
-    dist_coeffs: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    ok, rvec, tvec = cv2.solvePnP(points_3d, points_2d, camera_matrix, dist_coeffs)
-    if not ok:
-        raise ValueError(
-            "PnP 求解失败，请优先确认点对数量≥4，其次检查点是否共线/共面，再核验点顺序与相机标定质量，"
-            f"当前 2D 点数为 {len(points_2d)}，3D 点数为 {len(points_3d)}。"
-        )
-    return rvec, tvec
+    for ratio in np.linspace(min_eps, max_eps, steps):
+        approx = cv2.approxPolyDP(hull, ratio * peri, True)
+        if len(approx) == 4:
+            return approx.squeeze(1)  # Nx2
+    box = cv2.boxPoints(cv2.minAreaRect(hull)).astype(np.float32)
+    return box
 ```
 
 ### 3. Dataset (数据集构建与评估)
@@ -428,7 +417,7 @@ def calculate_avi(
 
 - **分割指标**：Mask-mAP@50-95
 - **拟合指标**：预测四边形与真值四边形 IoU
-- **定位精度**：四角点像素 RMSE 与 PnP 重投影误差
+- **定位精度**：四角点像素 RMSE
 
 #### 4.2 对比实验
 
