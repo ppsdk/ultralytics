@@ -238,6 +238,177 @@ Ultralytics 支持广泛的 YOLO 模型，从早期的版本如 [YOLOv3](https:/
 | :-----------------------------------------------------------------------------------------------------------------------------------: | :---------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------: |
 | 简化 YOLO 工作流程：使用 [Ultralytics 平台](https://platform.ultralytics.com/ultralytics/yolo26) 轻松进行标注、训练和部署。立即试用！ | 使用 [Weights & Biases](https://docs.ultralytics.com/integrations/weights-biases/) 跟踪实验、超参数和结果。 | 永久免费的 [Comet ML](https://docs.ultralytics.com/integrations/comet/) 让您能够保存 YOLO 模型、恢复训练并交互式地可视化预测结果。 | 使用 [Neural Magic DeepSparse](https://docs.ultralytics.com/integrations/neural-magic/)，将 YOLO 推理速度提高多达 6 倍。 |
 
+## 🔬 科研方案：基于边界约束与非模态分割的集装箱端面鲁棒定位研究
+
+### 1. Introduction (引言)
+
+#### 1.1 应用需求
+
+在自动化物流园场景中，复合移动机器人（如 AGV + 机械臂）需要对集装箱端面进行精准对位与作业。由于相机安装角度与端面之间存在显著视角偏差，采集图像呈现强透视变换。
+
+- **痛点**：传统水平检测框（AABB）无法贴合透视后的倾斜边缘，导致 PnP 算法的角点输入误差过大。
+- **挑战**：背光、锈迹、遮挡导致分割掩膜缺角或边缘模糊，无法直接提取稳定的四边形顶点。
+
+#### 1.2 主要贡献 (Contributions)
+
+1. **架构改进**：在 YOLO26 主干中引入 MSGG（Multi-Scale Geometric Gated）模块，增强长直边界的全局感知能力。
+2. **损失函数创新**：设计边界约束损失（Boundary-Constrained Loss, BCL），通过距离变换图引导非模态（Amodal）补全。
+3. **几何拟合管线**：提出“掩膜分割 → 凸包 → 动态拟合 → PnP 求解”流程，实现 2D 像素到世界坐标的稳定转换。
+
+### 2. Method (研究方法)
+
+#### 2.1 MSGG-YOLO26 网络架构实现
+
+在 Ultralytics 框架中，用 MSGG 模块替换部分 Bottleneck/C2f 的瓶颈层，以增强几何特征提取：
+
+```python
+import torch
+import torch.nn as nn
+
+
+class MSGGBlock(nn.Module):
+    """Multi-Scale Geometric Gated Module (MSGG) for long straight edges."""
+
+    def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):
+        super().__init__()
+        c_ = int(c2 * e)  # hidden channels
+        # 多核并行分支：捕捉不同尺度的几何边缘
+        self.branch1 = nn.Conv2d(c1, c_, kernel_size=3, padding=1, groups=g, bias=False)
+        self.branch2 = nn.Conv2d(c1, c_, kernel_size=7, padding=3, groups=g, bias=False)
+        self.branch3 = nn.Conv2d(c1, c_, kernel_size=11, padding=5, groups=g, bias=False)
+        # 门控融合单元：过滤背景噪声，增强边缘响应
+        self.gate = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(c_ * 3, c_ * 3, 1, bias=True),
+            nn.Sigmoid(),
+        )
+        self.conv_out = nn.Conv2d(c_ * 3, c2, 1, bias=False)
+        self.shortcut = shortcut and c1 == c2
+
+    def forward(self, x):
+        feat1 = self.branch1(x)
+        feat2 = self.branch2(x)
+        feat3 = self.branch3(x)
+        combined = torch.cat([feat1, feat2, feat3], dim=1)
+        weights = self.gate(combined)
+        out = self.conv_out(combined * weights)
+        return out + x if self.shortcut else out
+```
+
+> **说明**：当需要深度可分离卷积时，可将 `g=c1`；默认 `g=1` 保持标准卷积兼容。
+
+#### 2.2 几何感知损失函数 (Boundary-Constrained Loss)
+
+使用签名距离变换图引导非模态补全，抑制边界外溢：
+
+```python
+import torch
+from scipy import ndimage
+
+
+def signed_distance_map(mask: torch.Tensor) -> torch.Tensor:
+    """mask: (H, W) binary tensor, foreground=True."""
+    mask_np = mask.cpu().numpy().astype(bool)
+    dist_out = ndimage.distance_transform_edt(~mask_np)
+    dist_in = ndimage.distance_transform_edt(mask_np)
+    return torch.from_numpy(dist_out - dist_in).to(mask.device)
+
+
+def boundary_constrained_loss(pred_mask, dist_map, reduction="mean"):
+    """BCL Loss: P(x,y) * D(x,y), D<0 inside, D>0 outside."""
+    weighted = pred_mask * dist_map
+    return weighted.mean() if reduction == "mean" else weighted.sum()
+```
+
+集成到训练损失（示意）：
+
+```python
+loss = loss_v8_seg + lambda_bc * boundary_constrained_loss(pred_mask, dist_map)
+```
+
+#### 2.3 几何拟合与姿态求解
+
+将预测掩膜转化为稳定四边形，再输入 PnP 算法：
+
+```python
+import cv2
+import numpy as np
+
+
+def fit_quad_from_mask(mask: np.ndarray):
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    hull = cv2.convexHull(np.vstack(contours))
+    peri = cv2.arcLength(hull, True)
+    approx = cv2.approxPolyDP(hull, 0.02 * peri, True)
+    return approx.squeeze(1)  # Nx2
+
+
+def solve_pose(points_2d, points_3d, camera_matrix, dist_coeffs):
+    ok, rvec, tvec = cv2.solvePnP(points_3d, points_2d, camera_matrix, dist_coeffs)
+    return rvec, tvec
+```
+
+### 3. Dataset (数据集构建与评估)
+
+#### 3.1 标注与采集
+
+- **标注类型**：仅提供集装箱端面的四边形 Polygon 掩膜。
+- **场景覆盖**：背光、侧光、雨天、锈蚀、遮挡等物流场景。
+
+#### 3.2 合成遮挡与风格迁移 (SAAS)
+
+通过 Style-Aware Amodal Synthesis 生成遮挡样本：
+
+```python
+import numpy as np
+
+
+def style_aware_occlusion(bg, occ, alpha):
+    mu_bg, sigma_bg = bg.mean(axis=(0, 1)), bg.std(axis=(0, 1)) + 1e-6
+    mu_occ, sigma_occ = occ.mean(axis=(0, 1)), occ.std(axis=(0, 1)) + 1e-6
+    occ_mapped = (occ - mu_occ) * (sigma_bg / sigma_occ) + mu_bg
+    return bg * (1 - alpha) + occ_mapped * alpha
+```
+
+#### 3.3 数据质量评估 (DQA)
+
+引入 AVI (Augmentation Validity Index) 过滤低价值样本：
+
+```python
+def calculate_avi(image_augmented, gt_mask, occlusion_mask, alpha=0.6, beta=0.4):
+    visible_edge_ratio = calculate_edge_integrity(gt_mask, occlusion_mask)
+    hf_score = frequency_domain_analysis(image_augmented, occlusion_mask)
+    avi = alpha * visible_edge_ratio + beta * (1.0 - hf_score)
+    return avi > 0.3
+```
+
+### 4. Experiment Design (实验设计)
+
+#### 4.1 性能指标
+
+- **分割指标**：Mask-mAP@50-95
+- **拟合指标**：预测四边形与真值四边形 IoU
+- **定位精度**：四角点像素 RMSE 与 PnP 重投影误差
+
+#### 4.2 对比实验
+
+- Baseline：YOLOv8-seg / YOLOv11-seg
+- SOTA Seg：Mask R-CNN、Fast-SCNN（轻量化对比）
+- Amodal 上限：SAM 微调分割结果
+- Proposed：MSGG-YOLO26 + BCL Loss
+
+#### 4.3 消融实验
+
+- **BCL Loss 效能**：对比 BCE Loss，验证遮挡下补全能力。
+- **MSGG 模块对比**：对比 MSGG/CBAM/原生 Bottleneck 的长边捕捉能力。
+- **DQA 影响**：验证引入 AVI 后对真实场景泛化的提升。
+
+#### 4.4 训练细节与复现建议
+
+- 输入尺寸：640×640，AdamW/SGD 可选。
+- 数据增强：多尺度、颜色抖动、随机遮挡与 SAAS 合成样本混合。
+- 复现建议：固定随机种子，记录每个阶段的 mask-mAP 与 RMSE。
+
 ## 🤝 贡献
 
 我们依靠社区协作蓬勃发展！没有像您这样的开发者的贡献，Ultralytics YOLO 就不会成为如今最先进的框架。请参阅我们的[贡献指南](https://docs.ultralytics.com/help/contributing/)开始贡献。我们也欢迎您的反馈——通过完成我们的[调查问卷](https://www.ultralytics.com/survey?utm_source=github&utm_medium=social&utm_campaign=Survey)分享您的体验。非常**感谢** 🙏 每一位贡献者！
