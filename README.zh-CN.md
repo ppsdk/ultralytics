@@ -266,7 +266,7 @@ import torch
 import torch.nn as nn
 
 
-class MSGGBlock(nn.Module):
+class MSGG(nn.Module):
     """Multi-Scale Geometric Gated Module (MSGG) for long straight edges."""
 
     def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):
@@ -314,7 +314,9 @@ def signed_distance_map(mask: torch.Tensor) -> torch.Tensor:
     return torch.from_numpy(dist_out - dist_in).to(mask.device)
 
 
-def boundary_constrained_loss(pred_mask, dist_map, reduction="mean"):
+def boundary_constrained_loss(
+    pred_mask: torch.Tensor, dist_map: torch.Tensor, reduction: str = "mean"
+) -> torch.Tensor:
     """BCL Loss: P(x,y) * D(x,y), D<0 inside, D>0 outside."""
     weighted = pred_mask * dist_map
     return weighted.mean() if reduction == "mean" else weighted.sum()
@@ -335,7 +337,7 @@ import cv2
 import numpy as np
 
 
-def fit_quad_from_mask(mask: np.ndarray):
+def fit_quad_from_mask(mask: np.ndarray) -> np.ndarray:
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     hull = cv2.convexHull(np.vstack(contours))
     peri = cv2.arcLength(hull, True)
@@ -343,8 +345,10 @@ def fit_quad_from_mask(mask: np.ndarray):
     return approx.squeeze(1)  # Nx2
 
 
-def solve_pose(points_2d, points_3d, camera_matrix, dist_coeffs):
+def solve_pose(points_2d: np.ndarray, points_3d: np.ndarray, camera_matrix: np.ndarray, dist_coeffs: np.ndarray):
     ok, rvec, tvec = cv2.solvePnP(points_3d, points_2d, camera_matrix, dist_coeffs)
+    if not ok:
+        raise ValueError("PnP solve failed; check input points or camera parameters.")
     return rvec, tvec
 ```
 
@@ -363,7 +367,7 @@ def solve_pose(points_2d, points_3d, camera_matrix, dist_coeffs):
 import numpy as np
 
 
-def style_aware_occlusion(bg, occ, alpha):
+def style_aware_occlusion(bg: np.ndarray, occ: np.ndarray, alpha: np.ndarray) -> np.ndarray:
     mu_bg, sigma_bg = bg.mean(axis=(0, 1)), bg.std(axis=(0, 1)) + 1e-6
     mu_occ, sigma_occ = occ.mean(axis=(0, 1)), occ.std(axis=(0, 1)) + 1e-6
     occ_mapped = (occ - mu_occ) * (sigma_bg / sigma_occ) + mu_bg
@@ -375,7 +379,23 @@ def style_aware_occlusion(bg, occ, alpha):
 引入 AVI (Augmentation Validity Index) 过滤低价值样本：
 
 ```python
-def calculate_avi(image_augmented, gt_mask, occlusion_mask, alpha=0.6, beta=0.4):
+def calculate_edge_integrity(gt_mask: np.ndarray, occlusion_mask: np.ndarray) -> float:
+    """计算可见边比例（示例占位实现）。"""
+    return 1.0
+
+
+def frequency_domain_analysis(image_augmented: np.ndarray, occlusion_mask: np.ndarray) -> float:
+    """评估遮挡区域频域一致性（示例占位实现）。"""
+    return 0.0
+
+
+def calculate_avi(
+    image_augmented: np.ndarray,
+    gt_mask: np.ndarray,
+    occlusion_mask: np.ndarray,
+    alpha: float = 0.6,
+    beta: float = 0.4,
+) -> bool:
     visible_edge_ratio = calculate_edge_integrity(gt_mask, occlusion_mask)
     hf_score = frequency_domain_analysis(image_augmented, occlusion_mask)
     avi = alpha * visible_edge_ratio + beta * (1.0 - hf_score)
