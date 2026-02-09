@@ -409,8 +409,8 @@ def calculate_avi(
     image_augmented: np.ndarray,
     gt_mask: np.ndarray,
     occlusion_mask: np.ndarray,
-    alpha: float = 0.6,  # alpha: 边缘可见性权重（验证集网格搜索稳定区间）
-    beta: float = 0.4,  # beta: 高频一致性权重（与 alpha 互补）
+    alpha: float = 0.6,  # alpha: 边缘可见性权重（验证集网格搜索稳定区间 0.5-0.7）
+    beta: float = 0.4,  # beta: 高频一致性权重（与 alpha 互补，区间 0.3-0.5）
 ) -> bool:
     """AVI 综合评分：hf_penalty 越高代表突兀度越大，使用 (1 - hf_penalty) 转为一致性得分。"""
     # 默认建议 alpha + beta = 1.0 保持权重归一化；若需偏重某项指标，可调整但需重新校准阈值。
@@ -418,7 +418,7 @@ def calculate_avi(
     hf_penalty = frequency_domain_analysis(image_augmented, occlusion_mask)
     hf_consistency = 1.0 - hf_penalty  # 高频突兀度转为一致性得分
     avi = alpha * visible_edge_ratio + beta * hf_consistency
-    threshold = 0.3  # 验证集上取召回率约 0.9 的阈值，可在 0.2-0.5 范围微调
+    threshold = 0.3  # 验证集上取召回率约 0.9 的阈值, 可在 0.2-0.5 范围微调
     return avi > threshold
 ```
 
