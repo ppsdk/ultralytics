@@ -338,15 +338,23 @@ import numpy as np
 
 
 def fit_quad_from_mask(mask: np.ndarray, min_eps: float = 0.005, max_eps: float = 0.05, steps: int = 6) -> np.ndarray:
+    """动态拟合四边形，min_eps/max_eps 为周长比例搜索范围，steps 为采样步数。"""
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     hull = cv2.convexHull(np.vstack(contours))
     peri = cv2.arcLength(hull, True)
+    best = None
+    best_area = 0.0
     for ratio in np.linspace(min_eps, max_eps, steps):
         approx = cv2.approxPolyDP(hull, ratio * peri, True)
         if len(approx) == 4:
-            return approx.squeeze(1)  # Nx2
-    box = cv2.boxPoints(cv2.minAreaRect(hull)).astype(np.float32)
-    return box
+            area = abs(cv2.contourArea(approx))
+            if area > best_area:
+                best_area = area
+                best = approx
+    if best is not None:
+        return best.squeeze(1)  # Nx2
+    # 若无法拟合四边形，回退至最小外接矩形作为检测框
+    return cv2.boxPoints(cv2.minAreaRect(hull)).astype(np.float32)
 ```
 
 ### 3. Dataset (数据集构建与评估)
