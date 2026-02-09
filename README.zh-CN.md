@@ -418,7 +418,7 @@ def calculate_avi(
     hf_penalty = frequency_domain_analysis(image_augmented, occlusion_mask)
     hf_consistency = 1.0 - hf_penalty  # 高频突兀度转为一致性得分
     avi = alpha * visible_edge_ratio + beta * hf_consistency
-    threshold = 0.3  # 验证集上取召回率约 0.9 的阈值, 可在 0.2-0.5 范围微调
+    threshold = 0.3  # 验证集上取召回率约 0.9 的阈值, 可在 0.2-0.5 范围微调（精度优先可上调）
     return avi > threshold
 ```
 
