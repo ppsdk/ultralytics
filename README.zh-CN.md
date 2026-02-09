@@ -338,13 +338,13 @@ import numpy as np
 
 
 def fit_quad_from_mask(mask: np.ndarray, min_eps: float = 0.005, max_eps: float = 0.05, steps: int = 6) -> np.ndarray:
-    """动态拟合四边形，min_eps/max_eps 为周长比例搜索范围，steps 为采样步数，返回形状为 (4, 2) 的顶点数组（失败时为最小面积外接矩形顶点）。"""
+    """动态拟合四边形，min_eps/max_eps 为周长比例搜索范围，steps 为采样步数，返回形状为 (4, 2) 的顶点数组（失败时回退为最小面积外接矩形，语义为近似框）。"""
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     hull = cv2.convexHull(np.vstack(contours))
     peri = cv2.arcLength(hull, True)
     best = None
     best_area = 0.0
-    # 遍历多尺度逼近，选取面积最大的四边形以避免退化情况（如三角形或过度简化多边形），提升稳定性
+    # 遍历多尺度逼近，选取面积最大的四边形以避免退化情况（如三角形或过度简化多边形），稳定性优先于局部拟合度
     for ratio in np.linspace(min_eps, max_eps, steps):
         approx = cv2.approxPolyDP(hull, ratio * peri, True)
         if len(approx) == 4:
