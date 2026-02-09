@@ -344,7 +344,7 @@ def fit_quad_from_mask(mask: np.ndarray, min_eps: float = 0.005, max_eps: float 
     peri = cv2.arcLength(hull, True)
     best = None
     best_area = 0.0
-    # 遍历多尺度逼近，选取面积最大的四边形提升稳定性
+    # 遍历多尺度逼近，选取面积最大的四边形以避免退化情况，提升稳定性
     for ratio in np.linspace(min_eps, max_eps, steps):
         approx = cv2.approxPolyDP(hull, ratio * peri, True)
         if len(approx) == 4:
@@ -353,7 +353,7 @@ def fit_quad_from_mask(mask: np.ndarray, min_eps: float = 0.005, max_eps: float 
                 best_area = area
                 best = approx
     if best is not None:
-        return best.squeeze(1)  # 4x2
+        return best.squeeze(1)  # (4, 2)
     # 若无法拟合四边形，回退至最小外接矩形作为检测框
     return cv2.boxPoints(cv2.minAreaRect(hull)).astype(np.float32)
 ```
