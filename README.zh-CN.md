@@ -354,7 +354,7 @@ def solve_pose(
     ok, rvec, tvec = cv2.solvePnP(points_3d, points_2d, camera_matrix, dist_coeffs)
     if not ok:
         raise ValueError(
-            "PnP 求解失败，请检查点对应关系、相机标定参数，"
+            "PnP 求解失败，请检查点对应关系、相机标定参数，并确保至少提供 4 个非共面点对，"
             f"当前 2D 点数为 {len(points_2d)}，3D 点数为 {len(points_3d)}。"
         )
     return rvec, tvec
@@ -398,7 +398,7 @@ def calculate_edge_integrity(gt_mask: np.ndarray, occlusion_mask: np.ndarray) ->
 
 
 def frequency_domain_analysis(image_augmented: np.ndarray, occlusion_mask: np.ndarray) -> float:
-    """评估遮挡区域高频一致性（以拉普拉斯响应近似）。"""
+    """评估遮挡区域高频突兀度（以拉普拉斯响应近似，值越高越不一致）。"""
     hf_map = np.abs(ndimage.laplace(image_augmented.astype(np.float32))).mean(axis=2)
     mask = occlusion_mask.astype(bool)
     occ_score = hf_map[mask].mean() if mask.any() else 0.0
@@ -409,13 +409,13 @@ def calculate_avi(
     image_augmented: np.ndarray,
     gt_mask: np.ndarray,
     occlusion_mask: np.ndarray,
-    alpha: float = 0.6,  # alpha: 边缘可见性权重
-    beta: float = 0.4,  # beta: 高频一致性权重
+    alpha: float = 0.6,  # alpha: 边缘可见性权重（验证集网格搜索稳定区间）
+    beta: float = 0.4,  # beta: 高频一致性权重（与 alpha 互补）
 ) -> bool:
     visible_edge_ratio = calculate_edge_integrity(gt_mask, occlusion_mask)
-    hf_score = frequency_domain_analysis(image_augmented, occlusion_mask)
-    avi = alpha * visible_edge_ratio + beta * (1.0 - hf_score)
-    threshold = 0.3  # 经验阈值，可根据验证集调整
+    hf_penalty = frequency_domain_analysis(image_augmented, occlusion_mask)
+    avi = alpha * visible_edge_ratio + beta * (1.0 - hf_penalty)
+    threshold = 0.3  # 基于验证集 PR 曲线选取，可按场景微调
     return avi > threshold
 ```
 
