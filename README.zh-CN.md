@@ -307,7 +307,7 @@ from scipy import ndimage
 
 
 def signed_distance_map(mask: torch.Tensor) -> torch.Tensor:
-    """mask: (H, W) binary tensor, foreground=True."""
+    """mask: (H, W) binary tensor, foreground=True. 返回内负外正的距离变换图。"""
     mask_np = mask.cpu().numpy().astype(bool)
     dist_out = ndimage.distance_transform_edt(~mask_np)
     dist_in = ndimage.distance_transform_edt(mask_np)
@@ -345,10 +345,17 @@ def fit_quad_from_mask(mask: np.ndarray) -> np.ndarray:
     return approx.squeeze(1)  # Nx2
 
 
-def solve_pose(points_2d: np.ndarray, points_3d: np.ndarray, camera_matrix: np.ndarray, dist_coeffs: np.ndarray):
+def solve_pose(
+    points_2d: np.ndarray,
+    points_3d: np.ndarray,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
     ok, rvec, tvec = cv2.solvePnP(points_3d, points_2d, camera_matrix, dist_coeffs)
     if not ok:
-        raise ValueError("PnP solve failed; check input points or camera parameters.")
+        raise ValueError(
+            f"PnP solve failed; got {len(points_2d)} 2D points and {len(points_3d)} 3D points."
+        )
     return rvec, tvec
 ```
 
@@ -379,14 +386,22 @@ def style_aware_occlusion(bg: np.ndarray, occ: np.ndarray, alpha: np.ndarray) ->
 引入 AVI (Augmentation Validity Index) 过滤低价值样本：
 
 ```python
+from scipy import ndimage
+
+
 def calculate_edge_integrity(gt_mask: np.ndarray, occlusion_mask: np.ndarray) -> float:
-    """计算可见边比例（示例占位实现）。"""
-    return 1.0
+    """计算可见边比例。"""
+    edge = np.logical_xor(gt_mask, ndimage.binary_erosion(gt_mask))
+    visible = edge & ~occlusion_mask.astype(bool)
+    return float(visible.sum() / (edge.sum() + 1e-6))
 
 
 def frequency_domain_analysis(image_augmented: np.ndarray, occlusion_mask: np.ndarray) -> float:
-    """评估遮挡区域频域一致性（示例占位实现）。"""
-    return 0.0
+    """评估遮挡区域高频一致性（以拉普拉斯响应近似）。"""
+    hf_map = np.abs(ndimage.laplace(image_augmented.astype(np.float32))).mean(axis=2)
+    mask = occlusion_mask.astype(bool)
+    occ_score = hf_map[mask].mean() if mask.any() else 0.0
+    return float(np.clip(occ_score / (hf_map.mean() + 1e-6), 0.0, 1.0))
 
 
 def calculate_avi(
