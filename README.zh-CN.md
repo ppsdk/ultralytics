@@ -267,7 +267,7 @@ import torch.nn as nn
 
 
 class MSGG(nn.Module):
-    """Multi-Scale Geometric Gated Module (MSGG) for long straight edges."""
+    """多尺度几何门控模块（MSGG），用于增强长直边缘特征。"""
 
     def __init__(self, c1, c2, shortcut=True, g=1, e=0.5):
         super().__init__()
@@ -307,7 +307,7 @@ from scipy import ndimage
 
 
 def signed_distance_map(mask: torch.Tensor) -> torch.Tensor:
-    """mask: (H, W) binary tensor, foreground=True. 返回内负外正的距离变换图。"""
+    """mask: (H, W) 二值张量，前景为 True。返回内负外正的距离变换图。"""
     mask_np = mask.cpu().numpy().astype(bool)
     dist_out = ndimage.distance_transform_edt(~mask_np)
     dist_in = ndimage.distance_transform_edt(mask_np)
@@ -317,7 +317,7 @@ def signed_distance_map(mask: torch.Tensor) -> torch.Tensor:
 def boundary_constrained_loss(
     pred_mask: torch.Tensor, dist_map: torch.Tensor, reduction: str = "mean"
 ) -> torch.Tensor:
-    """BCL Loss: P(x,y) * D(x,y), D<0 inside, D>0 outside."""
+    """BCL Loss: P(x,y) * D(x,y)，其中 P 为预测概率，D 为签名距离值。"""
     weighted = pred_mask * dist_map
     return weighted.mean() if reduction == "mean" else weighted.sum()
 ```
@@ -354,7 +354,8 @@ def solve_pose(
     ok, rvec, tvec = cv2.solvePnP(points_3d, points_2d, camera_matrix, dist_coeffs)
     if not ok:
         raise ValueError(
-            f"PnP solve failed; got {len(points_2d)} 2D points and {len(points_3d)} 3D points."
+            "PnP 求解失败，请检查点对应关系、相机标定参数，"
+            f"当前 2D 点数为 {len(points_2d)}，3D 点数为 {len(points_3d)}。"
         )
     return rvec, tvec
 ```
@@ -408,13 +409,14 @@ def calculate_avi(
     image_augmented: np.ndarray,
     gt_mask: np.ndarray,
     occlusion_mask: np.ndarray,
-    alpha: float = 0.6,
-    beta: float = 0.4,
+    alpha: float = 0.6,  # alpha: 边缘可见性权重
+    beta: float = 0.4,  # beta: 高频一致性权重
 ) -> bool:
     visible_edge_ratio = calculate_edge_integrity(gt_mask, occlusion_mask)
     hf_score = frequency_domain_analysis(image_augmented, occlusion_mask)
     avi = alpha * visible_edge_ratio + beta * (1.0 - hf_score)
-    return avi > 0.3
+    threshold = 0.3  # 经验阈值，可根据验证集调整
+    return avi > threshold
 ```
 
 ### 4. Experiment Design (实验设计)
